@@ -1,0 +1,52 @@
+# Ignore backup files
+*.backup
+*_backup_*
+*~
+
+# Ignore logs
+*.log
+logs/
+tmp/
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Ignore temporary files
+*.tmp
+*.temp
+
+# Ignore compressed files
+*.zip
+*.tar.gz
+*.rar
+
+# Ignorar archivos de configuración y credenciales
+configuration.php
+build.sh
+build.php
+Dockerfile
+docker-compose.yml
+.env
+
+# Ignorar archivos de testing específicos del componente
+test_*.json
+diagnose_*.sql
+repair_*.sql
+check_*.sql
+fix_*.php
+*_test.php
+cleanup_*.php
+rebuild_*.php
+
+# Ignorar caché y archivos temporales adicionales
+cache/
+node_modules/
+vendor/

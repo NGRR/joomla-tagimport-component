@@ -5,8 +5,9 @@
 	<creationDate>Junio 2025</creationDate>
 	<copyright>(C) 2025 Novillo</copyright>
 	<license>GNU General Public License version 2 or later</license>
-	<authorEmail>nrodriguezrdd@gmail.com</authorEmail>
-	<authorUrl></authorUrl>	<version>1.1.0</version>
+	<authorEmail>nrodhriguez@gmail.com</authorEmail>
+	<authorUrl></authorUrl>
+	<version>1.1.0</version>
 	<description>COM_TAGIMPORT_XML_DESCRIPTION</description>
 	<administration>
 		<menu>COM_TAGIMPORT</menu>

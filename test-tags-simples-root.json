@@ -1,0 +1,34 @@
+[
+  {
+    "title": "Fotografía",
+    "alias": "fotografia",
+    "description": "Todo sobre fotografía",
+    "published": 1,
+    "access": 1,
+    "language": "*"
+  },
+  {
+    "title": "Cocina",
+    "alias": "cocina",
+    "description": "Recetas y técnicas culinarias",
+    "published": 1,
+    "access": 1,
+    "language": "*"
+  },
+  {
+    "title": "Deportes",
+    "alias": "deportes",
+    "description": "Actividades deportivas",
+    "published": 1,
+    "access": 1,
+    "language": "*"
+  },
+  {
+    "title": "Música",
+    "alias": "musica",
+    "description": "Géneros e instrumentos musicales",
+    "published": 1,
+    "access": 1,
+    "language": "*"
+  }
+]

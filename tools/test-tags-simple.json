@@ -1,0 +1,57 @@
+[
+  {
+    "title": "Tecnología",
+    "alias": "tecnologia",
+    "description": "Artículos relacionados con tecnología en general",
+    "published": 1,
+    "access": 1,
+    "language": "*",
+    "note": "Categoría principal de tecnología",
+    "metadesc": "Todo sobre tecnología moderna",
+    "metakey": "tecnología, innovación, digital"
+  },
+  {
+    "title": "Desarrollo Web",
+    "alias": "desarrollo-web",
+    "description": "Artículos sobre desarrollo de sitios web y aplicaciones",
+    "published": 1,
+    "access": 1,
+    "language": "*",
+    "note": "Subcategoría de desarrollo web",
+    "metadesc": "Desarrollo de sitios web modernos",
+    "metakey": "desarrollo, web, html, css, javascript"
+  },
+  {
+    "title": "Bases de Datos",
+    "alias": "bases-de-datos",
+    "description": "Artículos sobre gestión y optimización de bases de datos",
+    "published": 1,
+    "access": 1,
+    "language": "*",
+    "note": "Todo sobre bases de datos",
+    "metadesc": "Gestión de bases de datos",
+    "metakey": "bases de datos, mysql, postgresql, sql"
+  },
+  {
+    "title": "Marketing Digital",
+    "alias": "marketing-digital",
+    "description": "Estrategias y herramientas de marketing online",
+    "published": 1,
+    "access": 1,
+    "language": "*",
+    "note": "Categoría independiente de marketing",
+    "metadesc": "Marketing digital y estrategias online",
+    "metakey": "marketing, digital, seo, sem, redes sociales"
+  },
+  {
+    "title": "Diseño Gráfico",
+    "alias": "diseno-grafico",
+    "description": "Artículos sobre diseño visual y gráfico",
+    "published": 1,
+    "access": 1,
+    "language": "*",
+    "note": "Todo sobre diseño visual",
+    "metadesc": "Diseño gráfico y visual",
+    "metakey": "diseño, gráfico, visual, photoshop, illustrator"
+  }
+]

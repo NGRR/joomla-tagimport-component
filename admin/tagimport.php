@@ -180,7 +180,7 @@ function createTrackingTable()
  */
 function processTagImport($data, $globalParentId = 1)
 {
-    Log::add('Iniciando proceso de importación de tags', Log::INFO, 'com_tagimport');
+    Log::add('Iniciando proceso de importación de tags con parent global ID: ' . $globalParentId, Log::INFO, 'com_tagimport');
     
     try {
         $db = Factory::getDbo();
@@ -241,33 +241,105 @@ function processTagImport($data, $globalParentId = 1)
                 $metadesc = isset($tagData['metadesc']) ? $tagData['metadesc'] : '';
                 $metakey = isset($tagData['metakey']) ? $tagData['metakey'] : '';
                 
-                // Handle hierarchy fields
-                $parentId = isset($tagData['parent_id']) ? (int)$tagData['parent_id'] : (int)$globalParentId;
-                $level = isset($tagData['level']) ? (int)$tagData['level'] : 1;
-                $path = isset($tagData['path']) ? $tagData['path'] : $alias;
+                // Handle hierarchy fields - FORZAR uso del globalParentId como base
+                $parentId = $globalParentId; // SIEMPRE usar el parent global como base inicial
                 
-                Log::add('Procesando tag "' . $title . '" - parent_id inicial: ' . $parentId . ' (global_parent: ' . $globalParentId . ')', Log::DEBUG, 'com_tagimport');
+                Log::add('Tag "' . $title . '" - Inicializando con parent_id global: ' . $globalParentId, Log::DEBUG, 'com_tagimport');
                 
-                // If parent_id references another tag by alias, resolve it
-                if (isset($tagData['parent_alias'])) {
+                // Si hay parent_id específico en el JSON, usarlo solo si es válido y mayor que 1
+                if (isset($tagData['parent_id']) && is_numeric($tagData['parent_id']) && (int)$tagData['parent_id'] > 1) {
+                    $jsonParentId = (int)$tagData['parent_id'];
+                    Log::add('Tag "' . $title . '" tiene parent_id específico en JSON: ' . $jsonParentId, Log::DEBUG, 'com_tagimport');
+                    
+                    // Verificar que el parent_id del JSON sea válido
+                    $verifyJsonParentQuery = $db->getQuery(true)
+                        ->select('id, title')
+                        ->from('#__tags')
+                        ->where('id = ' . $jsonParentId);
+                    $db->setQuery($verifyJsonParentQuery);
+                    $jsonParentInfo = $db->loadAssoc();
+                    
+                    if ($jsonParentInfo) {
+                        $parentId = $jsonParentId;
+                        Log::add('Usando parent_id del JSON válido: ' . $parentId . ' (' . $jsonParentInfo['title'] . ')', Log::INFO, 'com_tagimport');
+                    } else {
+                        Log::add('ADVERTENCIA: parent_id del JSON (' . $jsonParentId . ') no existe. Usando global: ' . $globalParentId, Log::WARNING, 'com_tagimport');
+                        $parentId = $globalParentId;
+                    }
+                }
+                
+                // Si hay parent_alias, intentar resolverlo
+                if (isset($tagData['parent_alias']) && !empty($tagData['parent_alias'])) {
                     Log::add('Intentando resolver parent_alias "' . $tagData['parent_alias'] . '" para tag "' . $title . '"', Log::DEBUG, 'com_tagimport');
                     
                     $parentQuery = $db->getQuery(true)
-                        ->select('id')
+                        ->select('id, title')
                         ->from('#__tags')
                         ->where('alias = ' . $db->quote($tagData['parent_alias']));
                     $db->setQuery($parentQuery);
-                    $resolvedParentId = $db->loadResult();
+                    $resolvedParent = $db->loadAssoc();
                     
-                    if ($resolvedParentId) {
-                        $parentId = $resolvedParentId;
-                        Log::add('Parent ID resuelto para "' . $alias . '": parent "' . $tagData['parent_alias'] . '" = ID ' . $parentId, Log::INFO, 'com_tagimport');
+                    if ($resolvedParent) {
+                        $parentId = $resolvedParent['id'];
+                        Log::add('Parent alias resuelto para "' . $title . '": "' . $tagData['parent_alias'] . '" = ID ' . $parentId . ' (' . $resolvedParent['title'] . ')', Log::INFO, 'com_tagimport');
                     } else {
-                        Log::add('ADVERTENCIA: No se encontró parent con alias "' . $tagData['parent_alias'] . '" para tag "' . $title . '". Usando global_parent_id: ' . $globalParentId, Log::WARNING, 'com_tagimport');
-                        $parentId = (int)$globalParentId;
+                        Log::add('ADVERTENCIA: No se encontró parent con alias "' . $tagData['parent_alias'] . '" para tag "' . $title . '". Usando parent global: ' . $globalParentId, Log::WARNING, 'com_tagimport');
+                        $parentId = $globalParentId;
                     }
-                } else {
-                    Log::add('Tag "' . $title . '" usa parent_id global: ' . $parentId, Log::DEBUG, 'com_tagimport');
+                }
+                
+                // GARANTIZAR que siempre tengamos un parent_id válido
+                if ($parentId <= 1) {
+                    $parentId = $globalParentId; // Forzar uso del global si no hay otro
+                    Log::add('Forzando parent_id global para tag "' . $title . '": ' . $parentId, Log::INFO, 'com_tagimport');
+                }
+                
+                // Verificación final del parent_id antes de proceder
+                if ($parentId > 1) {
+                    $verifyParentQuery = $db->getQuery(true)
+                        ->select('id, title')
+                        ->from('#__tags')
+                        ->where('id = ' . (int)$parentId);
+                    $db->setQuery($verifyParentQuery);
+                    $parentInfo = $db->loadAssoc();
+                    
+                    if (!$parentInfo) {
+                        Log::add('ADVERTENCIA: Parent ID ' . $parentId . ' no existe. Forzando a parent global: ' . $globalParentId, Log::WARNING, 'com_tagimport');
+                        $parentId = ($globalParentId > 1) ? $globalParentId : 1;
+                    } else {
+                        Log::add('Parent verificado: ID ' . $parentId . ' = "' . $parentInfo['title'] . '"', Log::INFO, 'com_tagimport');
+                    }
+                }
+                
+                // Calcular level y path basados en el parent final
+                $level = 1; // Default level
+                $path = $alias; // Default path
+                
+                if ($parentId > 1) {
+                    // Obtener level del parent y calcular el nuevo level
+                    $parentLevelQuery = $db->getQuery(true)
+                        ->select('level, path')
+                        ->from('#__tags')
+                        ->where('id = ' . (int)$parentId);
+                    $db->setQuery($parentLevelQuery);
+                    $parentData = $db->loadAssoc();
+                    
+                    if ($parentData) {
+                        $level = $parentData['level'] + 1;
+                        $path = $parentData['path'] . '/' . $alias;
+                        Log::add('Calculado level=' . $level . ' y path="' . $path . '" basado en parent ID ' . $parentId, Log::DEBUG, 'com_tagimport');
+                    }
+                }
+                
+                // Override con valores del JSON si están presentes y son válidos
+                if (isset($tagData['level']) && is_numeric($tagData['level']) && $tagData['level'] > 0) {
+                    $level = (int)$tagData['level'];
+                    Log::add('Usando level del JSON: ' . $level, Log::DEBUG, 'com_tagimport');
+                }
+                
+                if (isset($tagData['path']) && !empty($tagData['path'])) {
+                    $path = $tagData['path'];
+                    Log::add('Usando path del JSON: ' . $path, Log::DEBUG, 'com_tagimport');
                 }
                 
                 $currentDate = Factory::getDate()->toSql();
@@ -301,28 +373,44 @@ function processTagImport($data, $globalParentId = 1)
                     'created_by_alias' => ''
                 ];
                 
-                Log::add('Datos finales para tag "' . $title . '": parent_id=' . $parentId . ', level=' . $level . ', path=' . $path, Log::INFO, 'com_tagimport');
+                Log::add('DATOS FINALES PARA IMPORT - Tag "' . $title . '": parent_id=' . $parentId . ' (global seleccionado: ' . $globalParentId . '), level=' . $level . ', path=' . $path, Log::INFO, 'com_tagimport');
                 
                 // Bind and save using Joomla's table (handles nested set automatically)
                 if ($table->bind($tableData)) {
-                    Log::add('Bind exitoso para tag "' . $title . '". parent_id en tabla: ' . $table->parent_id, Log::DEBUG, 'com_tagimport');
+                    Log::add('BIND exitoso para tag "' . $title . '". parent_id en tabla: ' . $table->parent_id, Log::INFO, 'com_tagimport');
+                    
+                    // DEBUG: Verificar valores antes de check()
+                    Log::add('ANTES CHECK - parent_id: ' . $table->parent_id . ', lft: ' . $table->lft . ', rgt: ' . $table->rgt . ', level: ' . $table->level, Log::INFO, 'com_tagimport');
                     
                     if ($table->check()) {
-                        Log::add('Check exitoso para tag "' . $title . '". parent_id después de check: ' . $table->parent_id, Log::DEBUG, 'com_tagimport');
+                        Log::add('CHECK exitoso para tag "' . $title . '". parent_id después de check: ' . $table->parent_id, Log::INFO, 'com_tagimport');
+                        
+                        // DEBUG: Verificar valores después de check() y antes de store()
+                        Log::add('ANTES STORE - parent_id: ' . $table->parent_id . ', lft: ' . $table->lft . ', rgt: ' . $table->rgt . ', level: ' . $table->level, Log::INFO, 'com_tagimport');
+                        
+                        // SIMPLIFICADO: Solo usar setLocation si necesitamos parent específico
+                        if ($parentId > 1) {
+                            Log::add('Configurando location para parent_id: ' . $parentId . ' antes de store', Log::INFO, 'com_tagimport');
+                            try {
+                                $table->setLocation($parentId, 'last-child');
+                                Log::add('setLocation exitoso - parent_id: ' . $table->parent_id . ', lft: ' . $table->lft . ', rgt: ' . $table->rgt, Log::INFO, 'com_tagimport');
+                            } catch (Exception $e) {
+                                Log::add('Error en setLocation: ' . $e->getMessage(), Log::WARNING, 'com_tagimport');
+                            }
+                        }
                         
                         if ($table->store()) {
                             $tagId = $table->id;
-                            Log::add('Tag "' . $title . '" importado exitosamente con ID: ' . $tagId . ' (parent_id enviado: ' . $parentId . ', parent_id final: ' . $table->parent_id . ')', Log::INFO, 'com_tagimport');
+                            Log::add('STORE exitoso para tag "' . $title . '" con ID: ' . $tagId, Log::INFO, 'com_tagimport');
                             
-                            // Verificar parent_id en la base de datos inmediatamente después del store
+                            // Verificación final después del store
                             $verifyQuery = $db->getQuery(true)
-                                ->select('parent_id, level, path')
+                                ->select('parent_id, level, path, lft, rgt')
                                 ->from('#__tags')
                                 ->where('id = ' . (int)$tagId);
                             $db->setQuery($verifyQuery);
-                            $verifyResult = $db->loadAssoc();
-                            
-                            Log::add('Verificación DB para tag "' . $title . '": parent_id=' . $verifyResult['parent_id'] . ', level=' . $verifyResult['level'] . ', path=' . $verifyResult['path'], Log::DEBUG, 'com_tagimport');
+                            $finalResult = $db->loadAssoc();
+                            Log::add('VERIFICACIÓN FINAL - Tag "' . $title . '" en DB: parent_id=' . $finalResult['parent_id'] . ', level=' . $finalResult['level'] . ', lft=' . $finalResult['lft'] . ', rgt=' . $finalResult['rgt'], Log::INFO, 'com_tagimport');
                             
                             // Add to tracking table
                             $trackingData = [
@@ -371,14 +459,21 @@ function processTagImport($data, $globalParentId = 1)
         
         Log::add('Importación completada: ' . $importedCount . ' importados, ' . $skippedCount . ' omitidos', Log::INFO, 'com_tagimport');
         
-        // Reconstruir nested set después de importación
+        // SIEMPRE reconstruir nested set después de importar para garantizar integridad
         if ($importedCount > 0) {
-            Log::add('Reconstruyendo nested set de tags...', Log::INFO, 'com_tagimport');
-            $rebuildResult = rebuildTagsNestedSet();
-            if ($rebuildResult['success']) {
-                Log::add('Nested set reconstruido exitosamente', Log::INFO, 'com_tagimport');
-            } else {
-                Log::add('Error reconstruyendo nested set: ' . $rebuildResult['error'], Log::WARNING, 'com_tagimport');
+            Log::add('Reconstruyendo nested set automáticamente después de importación...', Log::INFO, 'com_tagimport');
+            
+            try {
+                // Usar la función de rebuild automática
+                $rebuildResult = rebuildTagsNestedSet();
+                
+                if ($rebuildResult['success']) {
+                    Log::add('Nested set reconstruido exitosamente después de importación', Log::INFO, 'com_tagimport');
+                } else {
+                    Log::add('ADVERTENCIA: Error reconstruyendo nested set: ' . ($rebuildResult['error'] ?? 'error desconocido'), Log::WARNING, 'com_tagimport');
+                }
+            } catch (Exception $rebuildException) {
+                Log::add('ADVERTENCIA: Excepción reconstruyendo nested set: ' . $rebuildException->getMessage(), Log::WARNING, 'com_tagimport');
             }
         }
         
@@ -506,22 +601,61 @@ function rebuildTagsNestedSet()
             
             Log::add('Nested set reconstruido exitosamente usando TagsTable', Log::INFO, 'com_tagimport');
             
-            // Verify the rebuild worked by checking all non-root tags
+            // Verificación y corrección específica para problemas de anidamiento
+            Log::add('Verificando integridad del nested set para anidamiento...', Log::DEBUG, 'com_tagimport');
+            
             $query = $db->getQuery(true)
                 ->select('id, title, parent_id, level, lft, rgt, path')
                 ->from('#__tags')
-                ->where('id > 1') // Exclude ROOT
                 ->order('lft ASC');
             
             $db->setQuery($query);
             $allTags = $db->loadAssocList();
             
             $hierarchicalCount = 0;
+            $problemsDetected = [];
+            
             foreach ($allTags as $tag) {
                 if ($tag['parent_id'] > 1) {
                     $hierarchicalCount++;
                 }
+                
+                // Verificar que lft < rgt
+                if ($tag['lft'] >= $tag['rgt']) {
+                    $problemsDetected[] = "Tag '{$tag['title']}' tiene lft({$tag['lft']}) >= rgt({$tag['rgt']})";
+                }
+                
+                // Verificar que el rango lft-rgt sea válido (al menos 2 de diferencia para tags hoja)
+                if (($tag['rgt'] - $tag['lft']) < 1) {
+                    $problemsDetected[] = "Tag '{$tag['title']}' tiene rango lft-rgt inválido";
+                }
+                
                 Log::add("Tag verificado: {$tag['title']} - parent_id:{$tag['parent_id']}, level:{$tag['level']}, lft:{$tag['lft']}, rgt:{$tag['rgt']}", Log::DEBUG, 'com_tagimport');
+            }
+            
+            if (!empty($problemsDetected)) {
+                Log::add('PROBLEMAS DETECTADOS en nested set: ' . implode('; ', $problemsDetected), Log::WARNING, 'com_tagimport');
+                
+                // Intentar un rebuild adicional
+                Log::add('Ejecutando rebuild adicional para corregir problemas detectados...', Log::WARNING, 'com_tagimport');
+                $table->rebuild(1);
+                
+                // Re-verificar después del rebuild adicional
+                $db->setQuery($query);
+                $reVerifyTags = $db->loadAssocList();
+                $remainingProblems = [];
+                
+                foreach ($reVerifyTags as $tag) {
+                    if ($tag['lft'] >= $tag['rgt']) {
+                        $remainingProblems[] = "Tag '{$tag['title']}' SIGUE con lft({$tag['lft']}) >= rgt({$tag['rgt']})";
+                    }
+                }
+                
+                if (!empty($remainingProblems)) {
+                    Log::add('PROBLEMAS PERSISTENTES después del rebuild adicional: ' . implode('; ', $remainingProblems), Log::ERROR, 'com_tagimport');
+                } else {
+                    Log::add('Problemas corregidos exitosamente con rebuild adicional', Log::INFO, 'com_tagimport');
+                }
             }
             
             Log::add("Verificación completa: " . count($allTags) . " tags totales, {$hierarchicalCount} con jerarquía", Log::INFO, 'com_tagimport');
@@ -806,6 +940,156 @@ function getAvailableParentTags()
     return $tags;
 }
 
+/**
+ * Force hierarchy display refresh - específicamente para solucionar visualización en administrador
+ */
+function forceHierarchyDisplayRefresh()
+{
+    try {
+        $db = Factory::getDbo();
+        Log::add('Iniciando actualización forzada de visualización jerárquica...', Log::INFO, 'com_tagimport');
+        
+        // 1. CRÍTICO: Corregir tags con parent_id = 0 (excepto ROOT)
+        $query = $db->getQuery(true)
+            ->select('id, title, alias')
+            ->from('#__tags')
+            ->where('parent_id = 0')
+            ->where('id > 1'); // Excluir ROOT (ID=1)
+        
+        $db->setQuery($query);
+        $orphanedTags = $db->loadAssocList();
+        
+        $orphansFixed = 0;
+        if (!empty($orphanedTags)) {
+            Log::add('ENCONTRADOS ' . count($orphanedTags) . ' tags con parent_id=0 (incorrectos)', Log::WARNING, 'com_tagimport');
+            
+            foreach ($orphanedTags as $orphan) {
+                // Corregir parent_id a 1 (ROOT)
+                $updateQuery = $db->getQuery(true)
+                    ->update('#__tags')
+                    ->set('parent_id = 1')
+                    ->set('level = 1')
+                    ->where('id = ' . (int)$orphan['id']);
+                
+                $db->setQuery($updateQuery);
+                $db->execute();
+                
+                if ($db->getAffectedRows() > 0) {
+                    $orphansFixed++;
+                    Log::add("CORREGIDO: Tag '{$orphan['title']}' (ID:{$orphan['id']}) ahora es hijo de ROOT", Log::INFO, 'com_tagimport');
+                }
+            }
+        }
+        
+        // 2. Limpiar todos los caches relacionados con tags
+        $cacheTypes = ['com_tags', '_system', 'com_content'];
+        foreach ($cacheTypes as $cacheType) {
+            try {
+                $cache = Factory::getCache($cacheType, '');
+                $cache->clean();
+                Log::add("Cache {$cacheType} limpiado", Log::DEBUG, 'com_tagimport');
+            } catch (Exception $e) {
+                Log::add("Error limpiando cache {$cacheType}: " . $e->getMessage(), Log::WARNING, 'com_tagimport');
+            }
+        }
+        
+        // 3. Forzar recálculo de todos los paths jerárquicos
+        $query = $db->getQuery(true)
+            ->select('id, alias, parent_id, level')
+            ->from('#__tags')
+            ->where('id > 1')
+            ->order('lft ASC');
+        
+        $db->setQuery($query);
+        $allTags = $db->loadAssocList();
+        
+        $pathsUpdated = 0;
+        foreach ($allTags as $tag) {
+            $correctPath = $tag['alias'];
+            
+            if ($tag['parent_id'] > 1) {
+                // Construir path jerárquico correcto
+                $pathParts = [$tag['alias']];
+                $currentParentId = $tag['parent_id'];
+                
+                // Recorrer hacia arriba hasta llegar a ROOT
+                $maxLevels = 10; // Prevenir loops infinitos
+                $level = 0;
+                
+                while ($currentParentId > 1 && $level < $maxLevels) {
+                    $parentQuery = $db->getQuery(true)
+                        ->select('alias, parent_id')
+                        ->from('#__tags')
+                        ->where('id = ' . (int)$currentParentId);
+                    $db->setQuery($parentQuery);
+                    $parentData = $db->loadAssoc();
+                    
+                    if ($parentData) {
+                        array_unshift($pathParts, $parentData['alias']);
+                        $currentParentId = $parentData['parent_id'];
+                    } else {
+                        break;
+                    }
+                    $level++;
+                }
+                
+                $correctPath = implode('/', $pathParts);
+            }
+            
+            // Actualizar path si es necesario
+            $updateQuery = $db->getQuery(true)
+                ->update('#__tags')
+                ->set('path = ' . $db->quote($correctPath))
+                ->where('id = ' . (int)$tag['id']);
+            $db->setQuery($updateQuery);
+            $db->execute();
+            
+            if ($db->getAffectedRows() > 0) {
+                $pathsUpdated++;
+                Log::add("Path actualizado para tag ID {$tag['id']}: {$correctPath}", Log::DEBUG, 'com_tagimport');
+            }
+        }
+        
+        // 4. Forzar rebuild final del nested set
+        JTable::addIncludePath(JPATH_ADMINISTRATOR . '/components/com_tags/tables');
+        $table = JTable::getInstance('Tag', 'TagsTable');
+        $rebuildResult = $table->rebuild(1);
+        
+        if ($rebuildResult) {
+            Log::add('Nested set reconstruido exitosamente', Log::INFO, 'com_tagimport');
+        } else {
+            Log::add('ADVERTENCIA: Error en rebuild del nested set', Log::WARNING, 'com_tagimport');
+        }
+        
+        // 5. Limpiar cache una vez más después de las actualizaciones
+        foreach ($cacheTypes as $cacheType) {
+            try {
+                $cache = Factory::getCache($cacheType, '');
+                $cache->clean();
+            } catch (Exception $e) {
+                // Silencioso para evitar spam en logs
+            }
+        }
+        
+        $totalFixed = $orphansFixed + $pathsUpdated;
+        Log::add("Actualización de visualización completada: {$orphansFixed} tags huérfanos corregidos, {$pathsUpdated} paths actualizados", Log::INFO, 'com_tagimport');
+        
+        return [
+            'success' => true,
+            'orphans_fixed' => $orphansFixed,
+            'paths_updated' => $pathsUpdated,
+            'message' => "Visualización jerárquica actualizada: {$orphansFixed} tags huérfanos corregidos, {$pathsUpdated} paths actualizados"
+        ];
+        
+    } catch (Exception $e) {
+        Log::add('Error en actualización de visualización jerárquica: ' . $e->getMessage(), Log::ERROR, 'com_tagimport');
+        return [
+            'success' => false,
+            'error' => $e->getMessage()
+        ];
+    }
+}
+
 // Get current status
 $tagStatus = getTagImportStatus();
 
@@ -866,19 +1150,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $session = Factory::getSession();
                 $data = $session->get('tagimport_data');
                 
+                // Get the selected global parent ID
+                $globalParentId = isset($_POST['global_parent_id']) ? (int)$_POST['global_parent_id'] : 1;
+                Log::add('Importación iniciada con parent global ID: ' . $globalParentId, Log::INFO, 'com_tagimport');
+                
                 if (empty($data)) {
                     $message = Text::_('COM_TAGIMPORT_NO_TAGS_FOUND');
                     $messageType = 'error';
                 } else {
-                    // Get global parent ID from POST
-                    $globalParentId = isset($_POST['global_parent_id']) ? (int)$_POST['global_parent_id'] : 1;
-                    Log::add('Global parent ID seleccionado: ' . $globalParentId, Log::INFO, 'com_tagimport');
-                    
                     $importResult = processTagImport($data, $globalParentId);
                     
                     if ($importResult['success']) {
                         $session->clear('tagimport_data');
                         $message = sprintf(Text::_('COM_TAGIMPORT_IMPORT_SUCCESS'), $importResult['imported'], $importResult['skipped']);
+                        $message .= '<br><br><strong>✅ AUTOMÁTICO:</strong> El nested set se ha reconstruido automáticamente. Los tags importados deberían funcionar correctamente como padres para anidamiento manual.';
                         $messageType = 'success';
                         
                         // Refresh status
@@ -924,6 +1209,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $messageType = 'success';
                 } else {
                     $message = 'Error corrigiendo jerarquía: ' . $fixResult['error'];
+                    $messageType = 'error';
+                }
+            } else if ($action === 'force_display') {
+                // Handle force display hierarchy update
+                $forceResult = forceHierarchyDisplayRefresh();
+                
+                if ($forceResult['success']) {
+                    $message = 'Visualización jerárquica actualizada: ' . $forceResult['orphans_fixed'] . ' tags huérfanos corregidos, ' . $forceResult['paths_updated'] . ' paths actualizados';
+                    $messageType = 'success';
+                } else {
+                    $message = 'Error actualizando visualización: ' . $forceResult['error'];
                     $messageType = 'error';
                 }
             }
@@ -973,13 +1269,22 @@ if (!$previewData) {
         label { display: block; margin-bottom: 5px; font-weight: bold; }
         input[type="file"] { padding: 8px; border: 1px solid #ced4da; border-radius: 4px; width: 100%; max-width: 400px; }
         .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-        .status-item { background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center; }
-        .status-number { font-size: 24px; font-weight: bold; color: #007bff; }
+        .status-item { background: #2c3e50; color: #ffffff; padding: 15px; border-radius: 5px; text-align: center; }
+        .status-number { font-size: 24px; font-weight: bold; color: #3498db; }
         .preview-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
         .preview-table th, .preview-table td { padding: 8px 12px; border: 1px solid #dee2e6; text-align: left; }
-        .preview-table th { background: #f8f9fa; font-weight: bold; }
-        .json-format { background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #007bff; margin: 15px 0; }
-        .json-format pre { margin: 0; font-family: 'Courier New', monospace; font-size: 12px; }
+        .preview-table th { background: #34495e; color: #ffffff; font-weight: bold; }
+        .json-format { background: #2c3e50; color: #ffffff; padding: 15px; border-radius: 5px; border-left: 4px solid #3498db; margin: 15px 0; }
+        .parent-selection-section { margin: 20px 0; padding: 15px; background: #2c3e50 !important; color: #ffffff !important; border-radius: 5px; border-left: 4px solid #27ae60; }
+        .parent-selection-section h3 { color: #ffffff !important; }
+        .parent-selection-section p { color: #ecf0f1 !important; }
+        .parent-selection-section label { color: #ffffff !important; }
+        .parent-selection-section small { color: #bdc3c7 !important; }
+        .hierarchy-info { margin-top: 10px; padding: 10px; background: #34495e !important; color: #ffffff !important; border-radius: 4px; }
+        .hierarchy-info strong { color: #3498db !important; }
+        .hierarchy-info ul { color: #ecf0f1 !important; }
+        select { background: #ffffff !important; color: #2c3e50 !important; }
+        .json-format pre { margin: 0; font-family: 'Courier New', monospace; font-size: 12px; color: #ecf0f1; }
     </style>
     
     <script>
@@ -989,11 +1294,16 @@ if (!$previewData) {
             const hiddenField = document.getElementById('hidden_global_parent_id');
             
             if (parentSelect && hiddenField) {
+                // Sync on change
                 parentSelect.addEventListener('change', function() {
                     hiddenField.value = this.value;
+                    
+                    // Update visual feedback
+                    const selectedOption = this.options[this.selectedIndex];
+                    console.log('Parent seleccionado:', selectedOption.text, '(ID:', this.value, ')');
                 });
                 
-                // Initialize hidden field with current selection
+                // Set initial value
                 hiddenField.value = parentSelect.value;
             }
         });
@@ -1056,7 +1366,11 @@ if (!$previewData) {
             <p><?php echo sprintf(Text::_('COM_TAGIMPORT_PREVIEW_DESCRIPTION'), count($previewData)); ?></p>
             
             <div class="alert alert-info">
-                <?php echo Text::_('COM_TAGIMPORT_PREVIEW_WARNING'); ?>
+                <strong>📋 Información de la preview:</strong><br>
+                • <strong>🏠 Usará parent seleccionado:</strong> Tags sin jerarquía específica que se asignarán al tag padre que elijas abajo<br>
+                • <strong>📂 parent_alias:</strong> Tags que tienen un padre específico definido en el JSON<br>
+                • <strong>🔗 ID:</strong> Tags con parent_id específico en el JSON<br>
+                Esta preview muestra cómo se procesarán los tags según su contenido JSON.
             </div>
             
             <!-- Preview Table -->
@@ -1082,20 +1396,33 @@ if (!$previewData) {
                         <td><?php echo htmlspecialchars($tag['alias'] ?? ''); ?></td>
                         <td>
                             <?php 
-                            if (isset($tag['parent_alias'])) {
+                            if (isset($tag['parent_alias']) && !empty($tag['parent_alias'])) {
                                 echo '<span style="color: blue;">📂 ' . htmlspecialchars($tag['parent_alias']) . '</span>';
-                            } elseif (isset($tag['parent_id']) && $tag['parent_id'] == 1) {
-                                echo '<span style="color: green;">🏠 ROOT</span>';
+                            } elseif (isset($tag['parent_id']) && $tag['parent_id'] > 1) {
+                                echo '<span style="color: orange;">🔗 ID:' . $tag['parent_id'] . '</span>';
                             } else {
-                                echo '<span style="color: red;">❓ ID:' . ($tag['parent_id'] ?? '?') . '</span>';
+                                echo '<span style="color: green;">🏠 Usará parent seleccionado</span>';
                             }
                             ?>
                         </td>
                         <td>
-                            <span style="padding-left: <?php echo (($tag['level'] ?? 1) - 1) * 15; ?>px;">
-                                <?php echo str_repeat('└─ ', max(0, ($tag['level'] ?? 1) - 1)); ?>
-                                Nivel <?php echo $tag['level'] ?? 1; ?>
-                            </span>
+                            <?php 
+                            $level = $tag['level'] ?? null;
+                            $parentAlias = $tag['parent_alias'] ?? null;
+                            
+                            if ($parentAlias) {
+                                // Si tiene parent_alias, es hijo de otro tag
+                                echo '<span style="padding-left: 15px;">└─ Hijo de: ' . htmlspecialchars($parentAlias) . '</span>';
+                            } elseif ($level && $level > 1) {
+                                // Si tiene level definido y es mayor a 1
+                                echo '<span style="padding-left: ' . (($level - 1) * 15) . 'px;">';
+                                echo str_repeat('└─ ', max(0, $level - 1));
+                                echo 'Nivel ' . $level . '</span>';
+                            } else {
+                                // Sin jerarquía específica, usará parent seleccionado
+                                echo '<span style="color: #666;">📁 Nivel según parent seleccionado</span>';
+                            }
+                            ?>
                         </td>
                         <td><code><?php echo htmlspecialchars($tag['path'] ?? $tag['alias'] ?? ''); ?></code></td>
                         <td><?php echo isset($tag['published']) && $tag['published'] ? Text::_('JYES') : Text::_('JNO'); ?></td>
@@ -1112,7 +1439,7 @@ if (!$previewData) {
             </table>
             
             <!-- Parent Tag Selection -->
-            <div class="parent-selection-section" style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #28a745;">
+            <div class="parent-selection-section">
                 <h3>🔗 Configuración de Jerarquía</h3>
                 <p>Selecciona un tag padre para todos los tags de esta importación:</p>
                 
@@ -1132,12 +1459,13 @@ if (!$previewData) {
                     </small>
                 </div>
                 
-                <div class="hierarchy-info" style="margin-top: 10px; padding: 10px; background: #e3f2fd; border-radius: 4px;">
+                <div class="hierarchy-info">
                     <strong>ℹ️ Información:</strong>
                     <ul style="margin: 5px 0 0 20px;">
                         <li>Los tags con <code>parent_alias</code> en el JSON mantendrán su jerarquía interna</li>
                         <li>Los tags sin parent_alias se asignarán al tag padre seleccionado</li>
                         <li>Puedes cambiar la jerarquía individualmente después de importar</li>
+                        <li><strong>✅ NUEVO:</strong> El nested set se reconstruye automáticamente para funcionalidad completa de anidamiento</li>
                     </ul>
                 </div>
             </div>
@@ -1185,15 +1513,26 @@ if (!$previewData) {
                 <input type="hidden" name="<?php echo Factory::getApplication()->getFormToken(); ?>" value="1">
             </form>
             
+            <form action="index.php?option=com_tagimport" method="post" style="display: inline; margin-right: 10px;">
+                <button type="submit" class="btn btn-primary" onclick="return confirm('¿Forzar actualización de la visualización jerárquica?\\n\\nEsto corregirá específicamente el problema de tabulación en el administrador.');">
+                    👁️ Forzar Visualización Jerárquica
+                </button>
+                <input type="hidden" name="action" value="force_display">
+                <input type="hidden" name="<?php echo Factory::getApplication()->getFormToken(); ?>" value="1">
+            </form>
+            
             <small class="text-muted">
-                ⚠️ Usa esta herramienta si los tags no aparecen en el campo "Principal" o hay errores de edición.
+                ⚠️ Usa <strong>"Reconstruir Jerarquía"</strong> para problemas estructurales. Usa <strong>"Forzar Visualización"</strong> si los tags no muestran tabulación en el administrador.
             </small>
+            
+            <div class="alert alert-warning" style="margin-top: 15px;">
+                <strong>🎯 PROBLEMA ESPECÍFICO:</strong> Si los tags importados no muestran tabulación/jerarquía en el administrador de Joomla, usa el botón <strong>"👁️ Forzar Visualización Jerárquica"</strong>. Esta herramienta corrige específicamente los paths jerárquicos y limpia el cache para solucionar problemas de visualización.
+            </div>
             
             <div style="margin-top: 15px;">
                 <a href="index.php?option=com_tagimport&debug=status" class="btn btn-secondary" target="_blank">🔍 Ver Estado Actual de Tags</a>
-                <a href="components/com_tagimport/fix_hierarchy.php" class="btn btn-warning" target="_blank">🔧 Corregir Jerarquía Manualmente</a>
                 <small style="display: block; margin-top: 5px; color: #666;">
-                    Ver estado: Muestra tabla detallada con todos los tags. | Corregir: Repara relaciones parent_id rotas.
+                    Ver estado detallado: Muestra tabla completa con todos los tags y su estructura jerárquica.
                 </small>
             </div>
         </div>
@@ -1215,6 +1554,43 @@ if (!$previewData) {
     "metakey": "meta keywords"
   }
 ]</pre>
+            </div>
+        </div>
+        
+        <!-- Archivos de Prueba -->
+        <div class="card">
+            <h2>📁 Archivos JSON de Prueba</h2>
+            <p>Se han creado archivos de prueba en el directorio del componente para facilitar las pruebas:</p>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px;">
+                <div style="background: #2c3e50; color: #ffffff; padding: 15px; border-radius: 5px;">
+                    <h4 style="color: #3498db; margin: 0 0 10px 0;">🏠 test-tags-simples-root.json</h4>
+                    <p style="margin: 0 0 10px 0; color: #ecf0f1;">Tags simples que se crearán directamente en ROOT (o tag padre seleccionado):</p>
+                    <ul style="color: #bdc3c7; margin: 5px 0 0 20px;">
+                        <li>Fotografía</li>
+                        <li>Cocina</li>
+                        <li>Deportes</li>
+                        <li>Música</li>
+                    </ul>
+                </div>
+                
+                <div style="background: #2c3e50; color: #ffffff; padding: 15px; border-radius: 5px;">
+                    <h4 style="color: #27ae60; margin: 0 0 10px 0;">🔗 test-tags-para-anidar.json</h4>
+                    <p style="margin: 0 0 10px 0; color: #ecf0f1;">Tags sin jerarquía específica para anidar manualmente después:</p>
+                    <ul style="color: #bdc3c7; margin: 5px 0 0 20px;">
+                        <li>Ciencias</li>
+                        <li>Arte</li>
+                        <li>Viajes</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="alert alert-info" style="margin-top: 15px;">
+                <strong>💡 Procedimiento de prueba sugerido:</strong><br>
+                1. <strong>Importar simples:</strong> Usa <code>test-tags-simples-root.json</code> con ROOT seleccionado<br>
+                2. <strong>Importar para anidar:</strong> Usa <code>test-tags-para-anidar.json</code> con ROOT seleccionado<br>
+                3. <strong>Anidar manualmente:</strong> Ve al administrador de tags de Joomla y asigna los tags de prueba como hijos de otros tags existentes<br>
+                4. <strong>Verificar jerarquía:</strong> Revisa que la tabulación funcione correctamente en el administrador
             </div>
         </div>
     </div>

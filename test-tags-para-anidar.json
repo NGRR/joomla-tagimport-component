@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Ciencias",
+    "alias": "ciencias",
+    "description": "Conocimiento científico",
+    "published": 1,
+    "access": 1,
+    "language": "*"
+  },
+  {
+    "title": "Arte",
+    "alias": "arte",
+    "description": "Expresiones artísticas",
+    "published": 1,
+    "access": 1,
+    "language": "*"
+  },
+  {
+    "title": "Viajes",
+    "alias": "viajes",
+    "description": "Destinos y experiencias de viaje",
+    "published": 1,
+    "access": 1,
+    "language": "*"
+  }
+]

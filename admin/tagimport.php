@@ -1189,39 +1189,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $messageType = 'error';
                 }
                 
-            } else if ($action === 'rebuild') {
-                // Handle nested set rebuild
-                $rebuildResult = rebuildTagsNestedSet();
+            } else if ($action === 'clear') {
+                // Handle clear preview
+                $session = Factory::getSession();
+                $session->clear('tagimport_data');
+                $message = 'Preview limpiado';
+                $messageType = 'success';
+                $previewData = null;
                 
-                if ($rebuildResult['success']) {
-                    $message = 'Estructura jerárquica de tags reconstruida exitosamente';
-                    $messageType = 'success';
-                } else {
-                    $message = 'Error reconstruyendo estructura: ' . $rebuildResult['error'];
-                    $messageType = 'error';
-                }
-            } else if ($action === 'fix_hierarchy') {
-                // Handle manual hierarchy fix for test tags
-                $fixResult = fixTestHierarchy();
-                
-                if ($fixResult['success']) {
-                    $message = $fixResult['message'];
-                    $messageType = 'success';
-                } else {
-                    $message = 'Error corrigiendo jerarquía: ' . $fixResult['error'];
-                    $messageType = 'error';
-                }
-            } else if ($action === 'force_display') {
-                // Handle force display hierarchy update
-                $forceResult = forceHierarchyDisplayRefresh();
-                
-                if ($forceResult['success']) {
-                    $message = 'Visualización jerárquica actualizada: ' . $forceResult['orphans_fixed'] . ' tags huérfanos corregidos, ' . $forceResult['paths_updated'] . ' paths actualizados';
-                    $messageType = 'success';
-                } else {
-                    $message = 'Error actualizando visualización: ' . $forceResult['error'];
-                    $messageType = 'error';
-                }
             }
         }
     } else {
@@ -1339,11 +1314,6 @@ if (!$previewData) {
             </div>
         </div>
         
-        <!-- Import Warning -->
-        <div class="alert alert-warning">
-            <?php echo Text::_('COM_TAGIMPORT_IMPORT_WARNING'); ?>
-        </div>
-        
         <!-- Upload Form -->
         <div class="card">
             <h2><?php echo Text::_('COM_TAGIMPORT_IMPORT_TAGS'); ?></h2>
@@ -1351,7 +1321,6 @@ if (!$previewData) {
                 <div class="form-group">
                     <label for="jsonfile"><?php echo Text::_('COM_TAGIMPORT_FIELD_FILE_LABEL'); ?></label>
                     <input type="file" name="jsonfile" id="jsonfile" accept=".json" required>
-                    <small><?php echo Text::_('COM_TAGIMPORT_FIELD_FILE_DESC'); ?></small>
                 </div>
                 <button type="submit" class="btn btn-primary"><?php echo Text::_('COM_TAGIMPORT_UPLOAD_FILE'); ?></button>
                 <input type="hidden" name="action" value="upload">
@@ -1364,14 +1333,6 @@ if (!$previewData) {
         <div class="card">
             <h2><?php echo Text::_('COM_TAGIMPORT_PREVIEW_IMPORT'); ?></h2>
             <p><?php echo sprintf(Text::_('COM_TAGIMPORT_PREVIEW_DESCRIPTION'), count($previewData)); ?></p>
-            
-            <div class="alert alert-info">
-                <strong>📋 Información de la preview:</strong><br>
-                • <strong>🏠 Usará parent seleccionado:</strong> Tags sin jerarquía específica que se asignarán al tag padre que elijas abajo<br>
-                • <strong>📂 parent_alias:</strong> Tags que tienen un padre específico definido en el JSON<br>
-                • <strong>🔗 ID:</strong> Tags con parent_id específico en el JSON<br>
-                Esta preview muestra cómo se procesarán los tags según su contenido JSON.
-            </div>
             
             <!-- Preview Table -->
             <table class="preview-table">
@@ -1453,20 +1414,6 @@ if (!$previewData) {
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <small style="display: block; margin-top: 5px; color: #666;">
-                        💡 <strong>ROOT:</strong> Los tags se crearán en el nivel superior.<br>
-                        📁 <strong>Tag existente:</strong> Los tags se crearán como hijos del tag seleccionado.
-                    </small>
-                </div>
-                
-                <div class="hierarchy-info">
-                    <strong>ℹ️ Información:</strong>
-                    <ul style="margin: 5px 0 0 20px;">
-                        <li>Los tags con <code>parent_alias</code> en el JSON mantendrán su jerarquía interna</li>
-                        <li>Los tags sin parent_alias se asignarán al tag padre seleccionado</li>
-                        <li>Puedes cambiar la jerarquía individualmente después de importar</li>
-                        <li><strong>✅ NUEVO:</strong> El nested set se reconstruye automáticamente para funcionalidad completa de anidamiento</li>
-                    </ul>
                 </div>
             </div>
             
@@ -1500,99 +1447,11 @@ if (!$previewData) {
         </div>
         <?php endif; ?>
         
-        <!-- Maintenance Tools Section -->
-        <div class="card">
-            <h2>🔧 Herramientas de Mantenimiento</h2>
-            <p>Utilidades para reparar y mantener la estructura de tags.</p>
-            
-            <form action="index.php?option=com_tagimport" method="post" style="display: inline; margin-right: 10px;">
-                <button type="submit" class="btn btn-warning" onclick="return confirm('¿Reconstruir la estructura jerárquica de todos los tags?\\n\\nEsto corregirá problemas de nested set y jerarquía.');">
-                    🔧 Reconstruir Jerarquía de Tags
-                </button>
-                <input type="hidden" name="action" value="rebuild">
-                <input type="hidden" name="<?php echo Factory::getApplication()->getFormToken(); ?>" value="1">
-            </form>
-            
-            <form action="index.php?option=com_tagimport" method="post" style="display: inline; margin-right: 10px;">
-                <button type="submit" class="btn btn-primary" onclick="return confirm('¿Forzar actualización de la visualización jerárquica?\\n\\nEsto corregirá específicamente el problema de tabulación en el administrador.');">
-                    👁️ Forzar Visualización Jerárquica
-                </button>
-                <input type="hidden" name="action" value="force_display">
-                <input type="hidden" name="<?php echo Factory::getApplication()->getFormToken(); ?>" value="1">
-            </form>
-            
-            <small class="text-muted">
-                ⚠️ Usa <strong>"Reconstruir Jerarquía"</strong> para problemas estructurales. Usa <strong>"Forzar Visualización"</strong> si los tags no muestran tabulación en el administrador.
-            </small>
-            
-            <div class="alert alert-warning" style="margin-top: 15px;">
-                <strong>🎯 PROBLEMA ESPECÍFICO:</strong> Si los tags importados no muestran tabulación/jerarquía en el administrador de Joomla, usa el botón <strong>"👁️ Forzar Visualización Jerárquica"</strong>. Esta herramienta corrige específicamente los paths jerárquicos y limpia el cache para solucionar problemas de visualización.
-            </div>
-            
-            <div style="margin-top: 15px;">
-                <a href="index.php?option=com_tagimport&debug=status" class="btn btn-secondary" target="_blank">🔍 Ver Estado Actual de Tags</a>
-                <small style="display: block; margin-top: 5px; color: #666;">
-                    Ver estado detallado: Muestra tabla completa con todos los tags y su estructura jerárquica.
-                </small>
-            </div>
-        </div>
+
         
-        <!-- JSON Format Help -->
-        <div class="card">
-            <h2><?php echo Text::_('COM_TAGIMPORT_EXPECTED_JSON_FORMAT'); ?></h2>
-            <div class="json-format">
-                <pre>[
-  {
-    "title": "Tag Title",
-    "alias": "tag-alias",
-    "description": "Tag description",
-    "published": 1,
-    "access": 1,
-    "language": "*",
-    "note": "Optional note",
-    "metadesc": "Meta description",
-    "metakey": "meta keywords"
-  }
-]</pre>
-            </div>
-        </div>
+
         
-        <!-- Archivos de Prueba -->
-        <div class="card">
-            <h2>📁 Archivos JSON de Prueba</h2>
-            <p>Se han creado archivos de prueba en el directorio del componente para facilitar las pruebas:</p>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px;">
-                <div style="background: #2c3e50; color: #ffffff; padding: 15px; border-radius: 5px;">
-                    <h4 style="color: #3498db; margin: 0 0 10px 0;">🏠 test-tags-simples-root.json</h4>
-                    <p style="margin: 0 0 10px 0; color: #ecf0f1;">Tags simples que se crearán directamente en ROOT (o tag padre seleccionado):</p>
-                    <ul style="color: #bdc3c7; margin: 5px 0 0 20px;">
-                        <li>Fotografía</li>
-                        <li>Cocina</li>
-                        <li>Deportes</li>
-                        <li>Música</li>
-                    </ul>
-                </div>
-                
-                <div style="background: #2c3e50; color: #ffffff; padding: 15px; border-radius: 5px;">
-                    <h4 style="color: #27ae60; margin: 0 0 10px 0;">🔗 test-tags-para-anidar.json</h4>
-                    <p style="margin: 0 0 10px 0; color: #ecf0f1;">Tags sin jerarquía específica para anidar manualmente después:</p>
-                    <ul style="color: #bdc3c7; margin: 5px 0 0 20px;">
-                        <li>Ciencias</li>
-                        <li>Arte</li>
-                        <li>Viajes</li>
-                    </ul>
-                </div>
-            </div>
-            
-            <div class="alert alert-info" style="margin-top: 15px;">
-                <strong>💡 Procedimiento de prueba sugerido:</strong><br>
-                1. <strong>Importar simples:</strong> Usa <code>test-tags-simples-root.json</code> con ROOT seleccionado<br>
-                2. <strong>Importar para anidar:</strong> Usa <code>test-tags-para-anidar.json</code> con ROOT seleccionado<br>
-                3. <strong>Anidar manualmente:</strong> Ve al administrador de tags de Joomla y asigna los tags de prueba como hijos de otros tags existentes<br>
-                4. <strong>Verificar jerarquía:</strong> Revisa que la tabulación funcione correctamente en el administrador
-            </div>
-        </div>
+
     </div>
 </body>
 </html>

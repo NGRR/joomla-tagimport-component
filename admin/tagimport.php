@@ -178,7 +178,7 @@ function createTrackingTable()
 /**
  * Process tag import with robust SQL handling
  */
-function processTagImport($data)
+function processTagImport($data, $globalParentId = 1)
 {
     Log::add('Iniciando proceso de importación de tags', Log::INFO, 'com_tagimport');
     
@@ -242,11 +242,11 @@ function processTagImport($data)
                 $metakey = isset($tagData['metakey']) ? $tagData['metakey'] : '';
                 
                 // Handle hierarchy fields
-                $parentId = isset($tagData['parent_id']) ? (int)$tagData['parent_id'] : 1;
+                $parentId = isset($tagData['parent_id']) ? (int)$tagData['parent_id'] : (int)$globalParentId;
                 $level = isset($tagData['level']) ? (int)$tagData['level'] : 1;
                 $path = isset($tagData['path']) ? $tagData['path'] : $alias;
                 
-                Log::add('Procesando tag "' . $title . '" - parent_id inicial: ' . $parentId, Log::DEBUG, 'com_tagimport');
+                Log::add('Procesando tag "' . $title . '" - parent_id inicial: ' . $parentId . ' (global_parent: ' . $globalParentId . ')', Log::DEBUG, 'com_tagimport');
                 
                 // If parent_id references another tag by alias, resolve it
                 if (isset($tagData['parent_alias'])) {
@@ -263,10 +263,11 @@ function processTagImport($data)
                         $parentId = $resolvedParentId;
                         Log::add('Parent ID resuelto para "' . $alias . '": parent "' . $tagData['parent_alias'] . '" = ID ' . $parentId, Log::INFO, 'com_tagimport');
                     } else {
-                        Log::add('ADVERTENCIA: No se encontró parent con alias "' . $tagData['parent_alias'] . '" para tag "' . $title . '". Usando parent_id: ' . $parentId, Log::WARNING, 'com_tagimport');
+                        Log::add('ADVERTENCIA: No se encontró parent con alias "' . $tagData['parent_alias'] . '" para tag "' . $title . '". Usando global_parent_id: ' . $globalParentId, Log::WARNING, 'com_tagimport');
+                        $parentId = (int)$globalParentId;
                     }
                 } else {
-                    Log::add('Tag "' . $title . '" usa parent_id directo: ' . $parentId, Log::DEBUG, 'com_tagimport');
+                    Log::add('Tag "' . $title . '" usa parent_id global: ' . $parentId, Log::DEBUG, 'com_tagimport');
                 }
                 
                 $currentDate = Factory::getDate()->toSql();
@@ -727,6 +728,84 @@ function resetImportedTags()
     }
 }
 
+/**
+ * Get available tags for parent selection
+ */
+function getAvailableParentTags()
+{
+    $db = Factory::getDbo();
+    $tags = [];
+    
+    try {
+        $query = $db->getQuery(true)
+            ->select('id, title, alias, parent_id, level, path')
+            ->from('#__tags')
+            ->where('id > 1') // Exclude ROOT tag
+            ->where('published = 1') // Only published tags
+            ->order('lft ASC'); // Order by nested set left value for proper hierarchy
+        
+        $db->setQuery($query);
+        $results = $db->loadAssocList();
+        
+        if ($results) {
+            // Add ROOT option
+            $tags[] = [
+                'id' => 1,
+                'title' => '🏠 ROOT (Sin padre)',
+                'alias' => 'root',
+                'level' => 0,
+                'indent' => ''
+            ];
+            
+            // Process results to show hierarchy with indentation
+            foreach ($results as $tag) {
+                $indent = str_repeat('└─ ', max(0, $tag['level'] - 1));
+                $hierarchyIndicator = '';
+                
+                if ($tag['level'] == 1) {
+                    $hierarchyIndicator = '📁 ';
+                } elseif ($tag['level'] > 1) {
+                    $hierarchyIndicator = '📄 ';
+                }
+                
+                $tags[] = [
+                    'id' => $tag['id'],
+                    'title' => $hierarchyIndicator . $tag['title'],
+                    'alias' => $tag['alias'],
+                    'level' => $tag['level'],
+                    'indent' => $indent,
+                    'path' => $tag['path']
+                ];
+            }
+        } else {
+            // No tags available, only ROOT
+            $tags[] = [
+                'id' => 1,
+                'title' => '🏠 ROOT (Sin padre)',
+                'alias' => 'root',
+                'level' => 0,
+                'indent' => ''
+            ];
+        }
+        
+        Log::add('Tags disponibles para parent selection: ' . count($tags), Log::DEBUG, 'com_tagimport');
+        
+    } catch (Exception $e) {
+        Log::add('Error obteniendo tags para parent selection: ' . $e->getMessage(), Log::ERROR, 'com_tagimport');
+        
+        // Fallback to ROOT only
+        $tags[] = [
+            'id' => 1,
+            'title' => '🏠 ROOT (Sin padre)',
+            'alias' => 'root',
+            'level' => 0,
+            'indent' => ''
+        ];
+    }
+    
+    return $tags;
+}
+
 // Get current status
 $tagStatus = getTagImportStatus();
 
@@ -791,7 +870,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $message = Text::_('COM_TAGIMPORT_NO_TAGS_FOUND');
                     $messageType = 'error';
                 } else {
-                    $importResult = processTagImport($data);
+                    // Get global parent ID from POST
+                    $globalParentId = isset($_POST['global_parent_id']) ? (int)$_POST['global_parent_id'] : 1;
+                    Log::add('Global parent ID seleccionado: ' . $globalParentId, Log::INFO, 'com_tagimport');
+                    
+                    $importResult = processTagImport($data, $globalParentId);
                     
                     if ($importResult['success']) {
                         $session->clear('tagimport_data');
@@ -898,6 +981,23 @@ if (!$previewData) {
         .json-format { background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #007bff; margin: 15px 0; }
         .json-format pre { margin: 0; font-family: 'Courier New', monospace; font-size: 12px; }
     </style>
+    
+    <script>
+        // Sync parent selection with hidden field
+        document.addEventListener('DOMContentLoaded', function() {
+            const parentSelect = document.getElementById('global_parent_id');
+            const hiddenField = document.getElementById('hidden_global_parent_id');
+            
+            if (parentSelect && hiddenField) {
+                parentSelect.addEventListener('change', function() {
+                    hiddenField.value = this.value;
+                });
+                
+                // Initialize hidden field with current selection
+                hiddenField.value = parentSelect.value;
+            }
+        });
+    </script>
 </head>
 <body>
     <div class="container">
@@ -1011,10 +1111,42 @@ if (!$previewData) {
                 </tbody>
             </table>
             
+            <!-- Parent Tag Selection -->
+            <div class="parent-selection-section" style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #28a745;">
+                <h3>🔗 Configuración de Jerarquía</h3>
+                <p>Selecciona un tag padre para todos los tags de esta importación:</p>
+                
+                <?php $availableParents = getAvailableParentTags(); ?>
+                <div class="form-group">
+                    <label for="global_parent_id" style="font-weight: bold;">Tag Padre para esta importación:</label>
+                    <select name="global_parent_id" id="global_parent_id" style="width: 100%; max-width: 400px; padding: 8px; border: 1px solid #ced4da; border-radius: 4px;">
+                        <?php foreach ($availableParents as $parentTag): ?>
+                            <option value="<?php echo $parentTag['id']; ?>" <?php echo $parentTag['id'] == 1 ? 'selected' : ''; ?>>
+                                <?php echo $parentTag['indent']; ?><?php echo htmlspecialchars($parentTag['title']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small style="display: block; margin-top: 5px; color: #666;">
+                        💡 <strong>ROOT:</strong> Los tags se crearán en el nivel superior.<br>
+                        📁 <strong>Tag existente:</strong> Los tags se crearán como hijos del tag seleccionado.
+                    </small>
+                </div>
+                
+                <div class="hierarchy-info" style="margin-top: 10px; padding: 10px; background: #e3f2fd; border-radius: 4px;">
+                    <strong>ℹ️ Información:</strong>
+                    <ul style="margin: 5px 0 0 20px;">
+                        <li>Los tags con <code>parent_alias</code> en el JSON mantendrán su jerarquía interna</li>
+                        <li>Los tags sin parent_alias se asignarán al tag padre seleccionado</li>
+                        <li>Puedes cambiar la jerarquía individualmente después de importar</li>
+                    </ul>
+                </div>
+            </div>
+            
             <!-- Import and Clear buttons -->
             <form action="index.php?option=com_tagimport" method="post" style="display: inline;">
                 <button type="submit" class="btn btn-success"><?php echo Text::_('COM_TAGIMPORT_IMPORT_NOW'); ?></button>
                 <input type="hidden" name="action" value="import">
+                <input type="hidden" name="global_parent_id" id="hidden_global_parent_id" value="1">
                 <input type="hidden" name="<?php echo Factory::getApplication()->getFormToken(); ?>" value="1">
             </form>
             
